@@ -1,0 +1,107 @@
+name: Build Termux SQLite Archives
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "SQLite version to build"
+        required: true
+        type: string
+
+  schedule:
+    # Every two weeks, Sunday at midnight UTC
+    - cron: '0 0 1,15 * 0'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        include:
+          - arch: aarch64
+            url: https://grimler.se/termux-main/pool/main/s/sqlite/sqlite_${{ inputs.version }}_aarch64.deb
+
+          - arch: arm
+            url: https://grimler.se/termux-main/pool/main/s/sqlite/sqlite_${{ inputs.version }}_arm.deb
+
+          - arch: i686
+            url: https://grimler.se/termux-main/pool/main/s/sqlite/sqlite_${{ inputs.version }}_i686.deb
+
+          - arch: x86_64
+            url: https://grimler.se/termux-main/pool/main/s/sqlite/sqlite_${{ inputs.version }}_x86_64.deb
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download package
+        run: |
+          mkdir -p downloads
+
+          curl -fL "${{ matrix.url }}" \
+            -o "downloads/sqlite-${{ matrix.arch }}.deb"
+
+      - name: Extract package
+        run: |
+          mkdir -p work/${{ matrix.arch }}
+
+          cd work/${{ matrix.arch }}
+
+          # Extract the .deb
+          ar x ../../downloads/sqlite-${{ matrix.arch }}.deb
+
+          # Extract the filesystem
+          mkdir rootfs
+          tar -xf data.tar.* -C rootfs
+
+      - name: Flatten to files/
+        run: |
+          mkdir -p output/${{ matrix.arch }}
+
+          # Move contents of Termux's files/ directory
+          # to become the archive root.
+          cp -a \
+            work/${{ matrix.arch }}/rootfs/data/data/com.termux/files/. \
+            output/${{ matrix.arch }}/
+
+      - name: Create archive
+        run: |
+          mkdir -p artifacts
+
+          tar \
+            -C output/${{ matrix.arch }} \
+            -czf artifacts/sqlite-${{ matrix.arch }}.tar.gz \
+            .
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlite-${{ matrix.arch }}
+          path: artifacts/sqlite-${{ matrix.arch }}.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Display files
+        run: find release-assets -type f -print
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: sqlite-v${{ inputs.version }}
+          name: SQLite ${{ inputs.version }}
+          generate_release_notes: true
+          files: |
+            release-assets/**/sqlite-aarch64.tar.gz
+            release-assets/**/sqlite-arm.tar.gz
+            release-assets/**/sqlite-i686.tar.gz
+            release-assets/**/sqlite-x86_64.tar.gz
